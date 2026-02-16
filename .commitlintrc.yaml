@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Bonial International GmbH
+# SPDX-License-Identifier: Apache-2.0
+---
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  body-max-line-length:
+    - 1
+    - always
+    - 100
+  scope-enum:
+    - 2
+    - always
+    - - catalog
+      - cli
+      - deps
+      - inference
+      - parser
+      - release
+      - security
+      - types
+      - vex
