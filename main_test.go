@@ -96,6 +96,32 @@ func TestCLI_MissingInput(t *testing.T) {
 	}
 }
 
+func TestCLI_InvalidYAML(t *testing.T) {
+	buildBinary(t)
+
+	tmpFile := t.TempDir() + "/invalid.yaml"
+	if err := os.WriteFile(tmpFile, []byte(":::invalid yaml{{{"), 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	cmd := exec.Command("./trivyignore-to-vex",
+		"-i", tmpFile,
+		"--no-catalog",
+	)
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected error for invalid YAML input")
+	}
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected ExitError, got %T", err)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Errorf("expected exit code 2, got %d", exitErr.ExitCode())
+	}
+}
+
 func TestCLI_Version(t *testing.T) {
 	buildBinary(t)
 

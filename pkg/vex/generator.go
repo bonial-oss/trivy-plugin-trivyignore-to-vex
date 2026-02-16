@@ -4,12 +4,23 @@
 package vexgen
 
 import (
+	"crypto/rand"
+	"fmt"
 	"time"
 
 	"github.com/bonial-oss/trivy-plugin-trivyignore-to-vex/pkg/inference"
 	"github.com/bonial-oss/trivy-plugin-trivyignore-to-vex/pkg/types"
 	govex "github.com/openvex/go-vex/pkg/vex"
 )
+
+// generateUUID generates a UUID v4 string using crypto/rand.
+func generateUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
 
 // Options configures VEX document generation.
 type Options struct {
@@ -23,6 +34,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	now := time.Now().UTC()
 
 	doc := govex.New()
+	doc.ID = "urn:uuid:" + generateUUID()
 	doc.Author = opts.Author
 	doc.AuthorRole = "Document Creator"
 	doc.Timestamp = &now
@@ -38,6 +50,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 
 		stmt := govex.Statement{
 			Vulnerability: govex.Vulnerability{
+				ID:   "https://nvd.nist.gov/vuln/detail/" + entry.ID,
 				Name: govex.VulnerabilityID(entry.ID),
 			},
 			Status:          result.Status,

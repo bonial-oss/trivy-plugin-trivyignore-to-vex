@@ -4,6 +4,7 @@
 package vexgen
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,9 @@ func TestGenerate_BasicStatement(t *testing.T) {
 	}
 
 	stmt := doc.Statements[0]
+	if stmt.Vulnerability.ID != "https://nvd.nist.gov/vuln/detail/CVE-2023-1234" {
+		t.Errorf("expected vulnerability ID https://nvd.nist.gov/vuln/detail/CVE-2023-1234, got %s", stmt.Vulnerability.ID)
+	}
 	if stmt.Status != govex.StatusNotAffected {
 		t.Errorf("expected not_affected, got %s", stmt.Status)
 	}
@@ -172,6 +176,9 @@ func TestGenerate_DocumentMetadata(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if !strings.HasPrefix(doc.ID, "urn:uuid:") {
+		t.Errorf("expected document ID to start with urn:uuid:, got %s", doc.ID)
+	}
 	if doc.Context != "https://openvex.dev/ns/v0.2.0" {
 		t.Errorf("unexpected context: %s", doc.Context)
 	}

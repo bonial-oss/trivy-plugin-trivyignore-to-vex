@@ -58,11 +58,17 @@ func run() int {
 		author = "Unknown"
 	}
 
+	// Check if file exists/readable
+	if _, err := os.Stat(input); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
 	// Parse input
 	entries, err := parser.ParseFile(input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return 1
+		return 2
 	}
 
 	// Generate VEX document
