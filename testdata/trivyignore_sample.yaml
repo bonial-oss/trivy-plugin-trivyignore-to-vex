@@ -1,0 +1,16 @@
+vulnerabilities:
+  - id: CVE-2023-1234
+    statement: "Component not present in our runtime image"
+  - id: CVE-2023-5678
+    statement: "Risk accepted per JIRA-123"
+  - id: CVE-2023-9999
+    statement: "Fixed in next release"
+    expired_at: "2020-01-01"
+  - id: CVE-2023-0001
+    paths:
+      - "usr/lib/libfoo.so"
+    purls:
+      - "pkg:deb/debian/libfoo"
+  - id: CVE-2023-0002
+    statement: "Under review by security team"
+    expired_at: "2099-12-31"
