@@ -170,6 +170,27 @@ func TestGenerate_EmptyEntries(t *testing.T) {
 	}
 }
 
+func TestGenerate_MalformedExpiredAt(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-4444",
+			Statement: "Has bad date",
+			ExpiredAt: "not-a-date",
+		},
+	}
+	opts := Options{Author: "test-author"}
+
+	doc, err := Generate(entries, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Malformed date should be treated as not expired (entry included)
+	if len(doc.Statements) != 1 {
+		t.Fatalf("expected 1 statement (malformed date = not expired), got %d", len(doc.Statements))
+	}
+}
+
 func TestGenerate_DocumentMetadata(t *testing.T) {
 	doc, err := Generate(nil, Options{Author: "security-team"})
 	if err != nil {
