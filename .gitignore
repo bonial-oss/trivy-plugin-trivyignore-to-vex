@@ -1,0 +1,22 @@
+# Binaries
+trivyignore-to-vex
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build output
+out/
+
+# Worktrees
+.worktrees/
+
+# Test / lint output
+coverage.txt
+mega-linter.log
+megalinter-reports/
+
+# OS
+.DS_Store
