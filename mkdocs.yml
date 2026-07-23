@@ -3,6 +3,7 @@
 ---
 nav:
   - Home: index.md
+  - PRD: PRD.md
 
 site_description: >
   Trivy plugin that converts .trivyignore.yaml files into OpenVEX documents
