@@ -97,7 +97,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 
 		stmt := govex.Statement{
 			Vulnerability: govex.Vulnerability{
-				ID:   "https://nvd.nist.gov/vuln/detail/" + entry.ID,
+				ID:   vulnerabilityIRI(entry.ID),
 				Name: govex.VulnerabilityID(entry.ID),
 			},
 			Status:        result.Status,
