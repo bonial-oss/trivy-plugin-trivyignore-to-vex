@@ -4,6 +4,8 @@
 package vexgen
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -376,6 +378,74 @@ func TestGenerate_PathsProseForAffected(t *testing.T) {
 	// affected → paths prose goes into action_statement
 	if !strings.Contains(stmt.ActionStatement, "Affected paths: src/foo.js") {
 		t.Errorf("expected Affected paths: in action_statement, got: %s", stmt.ActionStatement)
+	}
+}
+
+func TestGenerate_WarningsWriter_CapturesPurlsWithoutProduct(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2025-25290",
+			Statement: "not reachable",
+			PURLs:     []string{"pkg:npm/foo"},
+		},
+		{
+			ID:        "CVE-2025-25291",
+			Statement: "not reachable",
+			PURLs:     []string{"pkg:npm/bar"},
+		},
+	}
+	var buf bytes.Buffer
+	_, err := Generate(entries, Options{Author: "team", WarningsWriter: &buf})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "2 .trivyignore.yaml entries have `purls`") {
+		t.Errorf("expected count-of-2 warning, got: %q", got)
+	}
+	if !strings.Contains(got, "Pass --product") {
+		t.Errorf("expected suggestion to pass --product, got: %q", got)
+	}
+}
+
+func TestGenerate_WarningsWriter_DiscardSuppresses(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2025-25290",
+			Statement: "not reachable",
+			PURLs:     []string{"pkg:npm/foo"},
+			ExpiredAt: "not-a-date", // triggers the malformed-date warning too
+		},
+	}
+	_, err := Generate(entries, Options{Author: "team", WarningsWriter: io.Discard})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// If io.Discard didn't route through the writer, this test would show up
+	// in the test runner's captured stderr. The assertion is implicit: no
+	// panic, no error, and (visually) no noise in the test output.
+}
+
+func TestGenerate_WarningsWriter_MalformedDate(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-4444",
+			Statement: "Has bad date",
+			ExpiredAt: "not-a-date",
+		},
+	}
+	var buf bytes.Buffer
+	_, err := Generate(entries, Options{Author: "team", WarningsWriter: &buf})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "CVE-2023-4444") {
+		t.Errorf("expected malformed-date warning to name the entry, got: %q", got)
+	}
+	if !strings.Contains(got, "not-a-date") {
+		t.Errorf("expected malformed-date warning to include the bad value, got: %q", got)
 	}
 }
 

@@ -6,6 +6,7 @@ package vexgen
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -48,12 +49,24 @@ type Options struct {
 	EntityKind      string
 	EntityNamespace string
 	EntityName      string
+
+	// WarningsWriter is where non-fatal warnings ("expired_at malformed",
+	// "purls without --product") are written. When nil, defaults to os.Stderr.
+	// Set to io.Discard to suppress warnings (used by --quiet in the CLI).
+	// Errors that accompany a returned error value are NOT written here — they
+	// remain the caller's responsibility.
+	WarningsWriter io.Writer
 }
 
 // Generate creates an OpenVEX document from .trivyignore.yaml entries.
 // Entries with expired_at dates in the past are skipped.
 func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	now := time.Now().UTC()
+
+	warnings := opts.WarningsWriter
+	if warnings == nil {
+		warnings = os.Stderr
+	}
 
 	uuid, err := generateUUID()
 	if err != nil {
@@ -73,7 +86,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	for _, entry := range entries {
 		expired, malformed := isExpired(entry.ExpiredAt, now)
 		if malformed {
-			fmt.Fprintf(os.Stderr, "Warning: %s has unparseable expired_at value %q, treating as not expired\n", entry.ID, entry.ExpiredAt)
+			fmt.Fprintf(warnings, "Warning: %s has unparseable expired_at value %q, treating as not expired\n", entry.ID, entry.ExpiredAt)
 		}
 		if expired {
 			continue
@@ -119,7 +132,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	}
 
 	if purlsWithoutProductCount > 0 {
-		fmt.Fprintf(os.Stderr,
+		fmt.Fprintf(warnings,
 			"Warning: %d .trivyignore.yaml entries have `purls` but no `--product` was provided.\n"+
 				"Subcomponent information will not appear in the emitted VEX document.\n"+
 				"Pass --product to preserve purl-to-subcomponent mapping.\n",
