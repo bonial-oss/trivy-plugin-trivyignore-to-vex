@@ -49,8 +49,8 @@ func TestGenerate_BasicStatement(t *testing.T) {
 	if stmt.Justification != govex.ComponentNotPresent {
 		t.Errorf("expected component_not_present, got %s", stmt.Justification)
 	}
-	if stmt.ImpactStatement != "Component not present in our image" {
-		t.Errorf("unexpected impact statement: %s", stmt.ImpactStatement)
+	if stmt.ImpactStatement != "Statement:\nComponent not present in our image" {
+		t.Errorf("unexpected impact statement: %q", stmt.ImpactStatement)
 	}
 }
 
@@ -72,8 +72,8 @@ func TestGenerate_AffectedDefault(t *testing.T) {
 	if stmt.Status != govex.StatusAffected {
 		t.Errorf("expected affected, got %s", stmt.Status)
 	}
-	if stmt.ActionStatement != "Risk accepted. Risk accepted per JIRA-123" {
-		t.Errorf("unexpected action statement: %s", stmt.ActionStatement)
+	if stmt.ActionStatement != "Risk accepted.\nStatement:\nRisk accepted per JIRA-123" {
+		t.Errorf("unexpected action statement: %q", stmt.ActionStatement)
 	}
 }
 
@@ -310,9 +310,13 @@ func TestGenerate_PurlsAsSubcomponentsWithProduct(t *testing.T) {
 	if subPurl != "pkg:npm/%40octokit/request" {
 		t.Errorf("unexpected subcomponent purl: %s", subPurl)
 	}
-	// prose "Affected purls:" should NOT appear when subcomponents are emitted structurally
-	if strings.Contains(stmt.ImpactStatement, "Affected purls:") {
-		t.Errorf("did not expect Affected purls: prose when product is set, got: %s", stmt.ImpactStatement)
+	// prose "Affected PURLs:" section should NOT appear when subcomponents are emitted structurally
+	if strings.Contains(stmt.ImpactStatement, "Affected PURLs:") {
+		t.Errorf("did not expect Affected PURLs: prose when product is set, got: %s", stmt.ImpactStatement)
+	}
+	// but the Statement: section should still contain the original statement
+	if !strings.Contains(stmt.ImpactStatement, "Statement:\nnot reachable") {
+		t.Errorf("expected Statement: section with original statement, got: %s", stmt.ImpactStatement)
 	}
 }
 
@@ -332,17 +336,17 @@ func TestGenerate_PurlsAsProseWithoutProduct(t *testing.T) {
 	if len(stmt.Products) != 0 {
 		t.Errorf("expected no products when --product not set, got %d", len(stmt.Products))
 	}
-	// not_affected → prose goes into impact_statement
-	if !strings.Contains(stmt.ImpactStatement, "Affected purls: pkg:npm/%40octokit/request, pkg:npm/other") {
-		t.Errorf("expected Affected purls: prose in impact_statement, got: %s", stmt.ImpactStatement)
-	}
-	// blank line separator between existing prose and new note
-	if !strings.Contains(stmt.ImpactStatement, "not reachable\n\nAffected purls:") {
-		t.Errorf("expected blank-line separator, got: %s", stmt.ImpactStatement)
+	// not_affected → sections go into impact_statement
+	want := "Affected PURLs:\n  - pkg:npm/%40octokit/request\n  - pkg:npm/other\nStatement:\nnot reachable"
+	if stmt.ImpactStatement != want {
+		t.Errorf("unexpected impact_statement:\ngot:  %q\nwant: %q", stmt.ImpactStatement, want)
 	}
 }
 
-func TestGenerate_PathsAsProse(t *testing.T) {
+func TestGenerate_PathsNotEmittedInOutput(t *testing.T) {
+	// Post-delta: paths are parsed from .trivyignore.yaml but never surface in
+	// the emitted VEX (VEX has no file-path scoping concept; paths don't
+	// identify what's shipped). This test pins that behavior.
 	entries := []types.IgnoreEntry{
 		{
 			ID:        "CVE-2023-1234",
@@ -355,17 +359,19 @@ func TestGenerate_PathsAsProse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	stmt := doc.Statements[0]
-	if !strings.Contains(stmt.ImpactStatement, "Affected paths: src/foo.js, src/bar.js") {
-		t.Errorf("expected Affected paths: prose, got: %s", stmt.ImpactStatement)
+	if strings.Contains(stmt.ImpactStatement, "src/foo.js") ||
+		strings.Contains(stmt.ImpactStatement, "src/bar.js") ||
+		strings.Contains(stmt.ImpactStatement, "Affected paths") {
+		t.Errorf("expected paths to not surface in impact_statement, got: %q", stmt.ImpactStatement)
 	}
 }
 
-func TestGenerate_PathsProseForAffected(t *testing.T) {
+func TestGenerate_ExpiresAtSection(t *testing.T) {
 	entries := []types.IgnoreEntry{
 		{
-			ID:        "CVE-2023-9999",
-			Statement: "Risk accepted",
-			Paths:     []string{"src/foo.js"},
+			ID:        "CVE-2023-3333",
+			Statement: "not reachable",
+			ExpiredAt: "2099-12-31",
 		},
 	}
 	doc, err := Generate(entries, Options{Author: "team"})
@@ -373,12 +379,105 @@ func TestGenerate_PathsProseForAffected(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	stmt := doc.Statements[0]
+	want := "Expires at: 2099-12-31\nStatement:\nnot reachable"
+	if stmt.ImpactStatement != want {
+		t.Errorf("unexpected impact_statement:\ngot:  %q\nwant: %q", stmt.ImpactStatement, want)
+	}
+}
+
+func TestGenerate_SectionOrderingAllPresent(t *testing.T) {
+	// Verify the fixed section ordering: Risk accepted. → Expires at: →
+	// Affected PURLs: → Statement:
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-8888",
+			Statement: "Living with this one",
+			ExpiredAt: "2099-12-31",
+			PURLs:     []string{"pkg:npm/foo"},
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	// This entry falls through to affected (no inference keywords matched).
 	if stmt.Status != govex.StatusAffected {
 		t.Fatalf("expected affected, got %s", stmt.Status)
 	}
-	// affected → paths prose goes into action_statement
-	if !strings.Contains(stmt.ActionStatement, "Affected paths: src/foo.js") {
-		t.Errorf("expected Affected paths: in action_statement, got: %s", stmt.ActionStatement)
+	want := "Risk accepted.\nExpires at: 2099-12-31\nAffected PURLs:\n  - pkg:npm/foo\nStatement:\nLiving with this one"
+	if stmt.ActionStatement != want {
+		t.Errorf("unexpected action_statement:\ngot:  %q\nwant: %q", stmt.ActionStatement, want)
+	}
+}
+
+func TestGenerate_EmptyStatementOmitsStatementSection(t *testing.T) {
+	// affected + empty statement → action_statement is just "Risk accepted." —
+	// no dangling "Statement:" label.
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-7777",
+			Statement: "",
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if stmt.ActionStatement != "Risk accepted." {
+		t.Errorf("expected action_statement = %q, got %q", "Risk accepted.", stmt.ActionStatement)
+	}
+}
+
+func TestGenerate_NotAffectedNoRiskAcceptedPrefix(t *testing.T) {
+	// not_affected statements must not carry the "Risk accepted." prefix —
+	// that leader is only for affected.
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-6666",
+			Statement: "not reachable",
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if stmt.Status != govex.StatusNotAffected {
+		t.Fatalf("expected not_affected, got %s", stmt.Status)
+	}
+	if strings.HasPrefix(stmt.ImpactStatement, "Risk accepted.") {
+		t.Errorf("not_affected impact_statement must not lead with 'Risk accepted.', got: %q", stmt.ImpactStatement)
+	}
+}
+
+func TestGenerate_FixedStatusRoutesToStatusNotes(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-5555",
+			Statement: "Fixed in v2.0",
+			ExpiredAt: "2099-12-31",
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if stmt.Status != govex.StatusFixed {
+		t.Fatalf("expected fixed, got %s", stmt.Status)
+	}
+	// fixed → sections go into status_notes (not impact/action)
+	if stmt.ImpactStatement != "" {
+		t.Errorf("expected empty impact_statement for fixed status, got: %q", stmt.ImpactStatement)
+	}
+	if stmt.ActionStatement != "" {
+		t.Errorf("expected empty action_statement for fixed status, got: %q", stmt.ActionStatement)
+	}
+	want := "Expires at: 2099-12-31\nStatement:\nFixed in v2.0"
+	if stmt.StatusNotes != want {
+		t.Errorf("unexpected status_notes:\ngot:  %q\nwant: %q", stmt.StatusNotes, want)
 	}
 }
 
@@ -483,24 +582,3 @@ func TestGenerate_WarningsWriter_MalformedDate(t *testing.T) {
 	}
 }
 
-func TestGenerate_PathsProseForFixed(t *testing.T) {
-	entries := []types.IgnoreEntry{
-		{
-			ID:        "CVE-2023-9998",
-			Statement: "Fixed in v2.0",
-			Paths:     []string{"src/foo.js"},
-		},
-	}
-	doc, err := Generate(entries, Options{Author: "team"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	stmt := doc.Statements[0]
-	if stmt.Status != govex.StatusFixed {
-		t.Fatalf("expected fixed, got %s", stmt.Status)
-	}
-	// fixed → prose goes into status_notes
-	if !strings.Contains(stmt.StatusNotes, "Affected paths: src/foo.js") {
-		t.Errorf("expected Affected paths: in status_notes, got: %s", stmt.StatusNotes)
-	}
-}

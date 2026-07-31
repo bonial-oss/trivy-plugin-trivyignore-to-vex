@@ -81,6 +81,7 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	doc.Version = 1
 	doc.Statements = []govex.Statement{}
 
+	hasProduct := opts.Product != ""
 	purlsWithoutProductCount := 0
 
 	for _, entry := range entries {
@@ -99,13 +100,11 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 				ID:   "https://nvd.nist.gov/vuln/detail/" + entry.ID,
 				Name: govex.VulnerabilityID(entry.ID),
 			},
-			Status:          result.Status,
-			Justification:   result.Justification,
-			ImpactStatement: result.ImpactStatement,
-			ActionStatement: result.ActionStatement,
+			Status:        result.Status,
+			Justification: result.Justification,
 		}
 
-		if opts.Product != "" {
+		if hasProduct {
 			product := govex.Product{
 				Component: govex.Component{ID: opts.Product},
 			}
@@ -120,13 +119,11 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 			}
 			stmt.Products = []govex.Product{product}
 		} else if len(entry.PURLs) > 0 {
-			appendProseNote(&stmt, "Affected purls", entry.PURLs)
 			purlsWithoutProductCount++
 		}
 
-		if len(entry.Paths) > 0 {
-			appendProseNote(&stmt, "Affected paths", entry.Paths)
-		}
+		text := buildStatementText(entry, result.Status, hasProduct)
+		setStatementText(&stmt, text)
 
 		doc.Statements = append(doc.Statements, stmt)
 	}
@@ -160,35 +157,63 @@ func composeDocID(uuid string, opts Options) string {
 	return "urn:uuid:" + uuid
 }
 
-// appendProseNote appends `prefix: v1, v2, ...` to the appropriate text field
-// on stmt, chosen by status:
-//   - not_affected      → impact_statement
-//   - affected          → action_statement
-//   - fixed / under_investigation → status_notes
+// buildStatementText composes the statement's text field as a section-based
+// multi-line string. Sections are emitted only when their source data is
+// present, in this fixed order:
 //
-// If the target field already has content, a blank line separates the existing
-// text from the appended note.
-func appendProseNote(stmt *govex.Statement, prefix string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	line := prefix + ": " + strings.Join(values, ", ")
+//  1. "Risk accepted."  — only for affected status
+//  2. "Expires at: <yyyy-mm-dd>"  — when entry.ExpiredAt is non-empty
+//  3. "Affected PURLs:\n  - <purl>..."  — when purls present AND no --product
+//  4. "Statement:\n<original statement>"  — when entry.Statement is non-empty
+//
+// Sections are joined by single "\n". The routing of the resulting string to
+// impact_statement / action_statement / status_notes happens in setStatementText.
+func buildStatementText(entry types.IgnoreEntry, status govex.Status, hasProduct bool) string {
+	var sections []string
 
-	switch stmt.Status {
-	case govex.StatusNotAffected:
-		stmt.ImpactStatement = appendWithBlankLine(stmt.ImpactStatement, line)
-	case govex.StatusAffected:
-		stmt.ActionStatement = appendWithBlankLine(stmt.ActionStatement, line)
-	default:
-		stmt.StatusNotes = appendWithBlankLine(stmt.StatusNotes, line)
+	if status == govex.StatusAffected {
+		sections = append(sections, "Risk accepted.")
 	}
+
+	if entry.ExpiredAt != "" {
+		sections = append(sections, "Expires at: "+entry.ExpiredAt)
+	}
+
+	if len(entry.PURLs) > 0 && !hasProduct {
+		lines := []string{"Affected PURLs:"}
+		for _, purl := range entry.PURLs {
+			lines = append(lines, "  - "+purl)
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+
+	if stmt := strings.TrimRight(entry.Statement, "\n"); stmt != "" {
+		sections = append(sections, "Statement:\n"+stmt)
+	}
+
+	return strings.Join(sections, "\n")
 }
 
-func appendWithBlankLine(existing, add string) string {
-	if existing == "" {
-		return add
+// setStatementText routes the composed text field to the appropriate govex
+// Statement slot based on status:
+//   - not_affected                → impact_statement
+//   - affected                    → action_statement
+//   - fixed / under_investigation → status_notes
+//
+// An empty text is not routed anywhere (the field stays zero-valued and
+// omitempty will drop it from the JSON output).
+func setStatementText(stmt *govex.Statement, text string) {
+	if text == "" {
+		return
 	}
-	return existing + "\n\n" + add
+	switch stmt.Status {
+	case govex.StatusNotAffected:
+		stmt.ImpactStatement = text
+	case govex.StatusAffected:
+		stmt.ActionStatement = text
+	default:
+		stmt.StatusNotes = text
+	}
 }
 
 // isExpired returns true if the expired_at date is in the past.
