@@ -5,6 +5,7 @@ package vexgen
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -425,6 +426,39 @@ func TestGenerate_WarningsWriter_DiscardSuppresses(t *testing.T) {
 	// If io.Discard didn't route through the writer, this test would show up
 	// in the test runner's captured stderr. The assertion is implicit: no
 	// panic, no error, and (visually) no noise in the test output.
+}
+
+// TestGenerate_RoleOmittedFromJSONWhenEmpty is a defensive test that pins our
+// FR-3.3 "omit role when no signal" contract to the upstream go-vex library's
+// `json:"role,omitempty"` tag on Metadata.AuthorRole. If a future go-vex
+// release drops the omitempty tag, we would silently start emitting
+// `"role": ""` in every doc lacking a role signal — spec-legal but misleading.
+// This test catches that regression at `go mod tidy` time.
+func TestGenerate_RoleOmittedFromJSONWhenEmpty(t *testing.T) {
+	doc, err := Generate(nil, Options{Author: "Unknown"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.AuthorRole != "" {
+		t.Fatalf("test invariant broken: AuthorRole should be empty in Options with no role signal, got %q", doc.AuthorRole)
+	}
+
+	var buf bytes.Buffer
+	if err := doc.ToJSON(&buf); err != nil {
+		t.Fatalf("failed to serialize VEX: %v", err)
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if v, has := m["role"]; has {
+		t.Errorf("expected `role` to be omitted from JSON when AuthorRole is empty, found role=%v.\n"+
+			"This likely means the upstream go-vex library dropped the `json:\"role,omitempty\"` tag on "+
+			"Metadata.AuthorRole. Our FR-3.3 \"omit role when no signal\" contract depends on that tag; "+
+			"pin the go-vex version or implement a custom marshaler in pkg/vex to restore the behavior.",
+			v)
+	}
 }
 
 func TestGenerate_WarningsWriter_MalformedDate(t *testing.T) {
