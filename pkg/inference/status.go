@@ -30,6 +30,11 @@ var rules = []rule{
 		justification: vex.ComponentNotPresent,
 	},
 	{
+		keywords:      []string{"not compiled in", "not present in build", "feature disabled", "excluded from build", "build flag off"},
+		status:        vex.StatusNotAffected,
+		justification: vex.VulnerableCodeNotPresent,
+	},
+	{
 		keywords:      []string{"not reachable", "not in execute path", "dead code"},
 		status:        vex.StatusNotAffected,
 		justification: vex.VulnerableCodeNotInExecutePath,

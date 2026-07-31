@@ -33,6 +33,27 @@ func TestInferStatus(t *testing.T) {
 			wantImpact:  "Package is not installed in production",
 		},
 		{
+			name:        "not compiled in",
+			statement:   "Feature is not compiled in for our build",
+			wantStatus:  vex.StatusNotAffected,
+			wantJustify: vex.VulnerableCodeNotPresent,
+			wantImpact:  "Feature is not compiled in for our build",
+		},
+		{
+			name:        "feature disabled",
+			statement:   "Vulnerable feature disabled at build time",
+			wantStatus:  vex.StatusNotAffected,
+			wantJustify: vex.VulnerableCodeNotPresent,
+			wantImpact:  "Vulnerable feature disabled at build time",
+		},
+		{
+			name:        "excluded from build",
+			statement:   "Module excluded from build via linker flag",
+			wantStatus:  vex.StatusNotAffected,
+			wantJustify: vex.VulnerableCodeNotPresent,
+			wantImpact:  "Module excluded from build via linker flag",
+		},
+		{
 			name:        "not reachable",
 			statement:   "Code is not reachable from any entry point",
 			wantStatus:  vex.StatusNotAffected,
