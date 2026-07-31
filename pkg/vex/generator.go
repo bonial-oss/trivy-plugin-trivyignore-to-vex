@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/bonial-oss/trivy-plugin-trivyignore-to-vex/pkg/inference"
@@ -25,10 +26,28 @@ func generateUUID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
-// Options configures VEX document generation.
+// Options configures VEX document generation. All fields are resolved to
+// their final values by the caller; Generate does not perform derivation.
 type Options struct {
-	Author  string
+	// Author is the resolved document author. Emitted verbatim as `author`.
+	Author string
+
+	// AuthorRole is the resolved document author role. Empty → field omitted.
+	AuthorRole string
+
+	// Product is the resolved --product value. Sole source of products[].@id.
+	// Empty means no product identifier is available; statements are emitted
+	// without a products array (spec-legal per OpenVEX v0.2).
 	Product string
+
+	// BackstageURL, EntityKind, EntityNamespace, EntityName together enable
+	// the Backstage-URL document @id form. When ALL FOUR are set, the doc @id
+	// is `<BackstageURL>/catalog/<EntityNamespace>/<EntityKind>/<EntityName>#vex-<uuid>`;
+	// otherwise the doc @id falls back to `urn:uuid:<uuid>`.
+	BackstageURL    string
+	EntityKind      string
+	EntityNamespace string
+	EntityName      string
 }
 
 // Generate creates an OpenVEX document from .trivyignore.yaml entries.
@@ -36,17 +55,20 @@ type Options struct {
 func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 	now := time.Now().UTC()
 
-	doc := govex.New()
 	uuid, err := generateUUID()
 	if err != nil {
 		return nil, err
 	}
-	doc.ID = "urn:uuid:" + uuid
+
+	doc := govex.New()
+	doc.ID = composeDocID(uuid, opts)
 	doc.Author = opts.Author
-	doc.AuthorRole = "Document Creator"
+	doc.AuthorRole = opts.AuthorRole
 	doc.Timestamp = &now
 	doc.Version = 1
 	doc.Statements = []govex.Statement{}
+
+	purlsWithoutProductCount := 0
 
 	for _, entry := range entries {
 		expired, malformed := isExpired(entry.ExpiredAt, now)
@@ -71,15 +93,89 @@ func Generate(entries []types.IgnoreEntry, opts Options) (*govex.VEX, error) {
 		}
 
 		if opts.Product != "" {
-			stmt.Products = []govex.Product{
-				{Component: govex.Component{ID: opts.Product}},
+			product := govex.Product{
+				Component: govex.Component{ID: opts.Product},
 			}
+			for _, purl := range entry.PURLs {
+				product.Subcomponents = append(product.Subcomponents, govex.Subcomponent{
+					Component: govex.Component{
+						Identifiers: map[govex.IdentifierType]string{
+							govex.PURL: purl,
+						},
+					},
+				})
+			}
+			stmt.Products = []govex.Product{product}
+		} else if len(entry.PURLs) > 0 {
+			appendProseNote(&stmt, "Affected purls", entry.PURLs)
+			purlsWithoutProductCount++
+		}
+
+		if len(entry.Paths) > 0 {
+			appendProseNote(&stmt, "Affected paths", entry.Paths)
 		}
 
 		doc.Statements = append(doc.Statements, stmt)
 	}
 
+	if purlsWithoutProductCount > 0 {
+		fmt.Fprintf(os.Stderr,
+			"Warning: %d .trivyignore.yaml entries have `purls` but no `--product` was provided.\n"+
+				"Subcomponent information will not appear in the emitted VEX document.\n"+
+				"Pass --product to preserve purl-to-subcomponent mapping.\n",
+			purlsWithoutProductCount)
+	}
+
 	return &doc, nil
+}
+
+// composeDocID returns the OpenVEX document @id.
+// Backstage-URL form when all four EntityKind/Namespace/Name and BackstageURL are set;
+// urn:uuid form otherwise. The kind segment is lowercased to match Backstage's
+// URL convention (kinds in YAML are typically PascalCase; the router is
+// case-insensitive but the canonical URL form is lowercase).
+func composeDocID(uuid string, opts Options) string {
+	if opts.BackstageURL != "" && opts.EntityKind != "" && opts.EntityNamespace != "" && opts.EntityName != "" {
+		return fmt.Sprintf("%s/catalog/%s/%s/%s#vex-%s",
+			strings.TrimRight(opts.BackstageURL, "/"),
+			opts.EntityNamespace,
+			strings.ToLower(opts.EntityKind),
+			opts.EntityName,
+			uuid,
+		)
+	}
+	return "urn:uuid:" + uuid
+}
+
+// appendProseNote appends `prefix: v1, v2, ...` to the appropriate text field
+// on stmt, chosen by status:
+//   - not_affected      → impact_statement
+//   - affected          → action_statement
+//   - fixed / under_investigation → status_notes
+//
+// If the target field already has content, a blank line separates the existing
+// text from the appended note.
+func appendProseNote(stmt *govex.Statement, prefix string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	line := prefix + ": " + strings.Join(values, ", ")
+
+	switch stmt.Status {
+	case govex.StatusNotAffected:
+		stmt.ImpactStatement = appendWithBlankLine(stmt.ImpactStatement, line)
+	case govex.StatusAffected:
+		stmt.ActionStatement = appendWithBlankLine(stmt.ActionStatement, line)
+	default:
+		stmt.StatusNotes = appendWithBlankLine(stmt.StatusNotes, line)
+	}
+}
+
+func appendWithBlankLine(existing, add string) string {
+	if existing == "" {
+		return add
+	}
+	return existing + "\n\n" + add
 }
 
 // isExpired returns true if the expired_at date is in the past.

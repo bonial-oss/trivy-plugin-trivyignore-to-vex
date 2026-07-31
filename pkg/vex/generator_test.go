@@ -206,8 +206,8 @@ func TestGenerate_DocumentMetadata(t *testing.T) {
 	if doc.Author != "security-team" {
 		t.Errorf("unexpected author: %s", doc.Author)
 	}
-	if doc.AuthorRole != "Document Creator" {
-		t.Errorf("unexpected role: %s", doc.AuthorRole)
+	if doc.AuthorRole != "" {
+		t.Errorf("expected empty role (omitted) when no AuthorRole is provided, got: %s", doc.AuthorRole)
 	}
 	if doc.Version != 1 {
 		t.Errorf("expected version 1, got %d", doc.Version)
@@ -217,5 +217,186 @@ func TestGenerate_DocumentMetadata(t *testing.T) {
 	}
 	if time.Since(*doc.Timestamp) > 5*time.Second {
 		t.Errorf("timestamp too far in the past: %v", doc.Timestamp)
+	}
+}
+
+func TestGenerate_AuthorRoleVerbatim(t *testing.T) {
+	doc, err := Generate(nil, Options{Author: "team", AuthorRole: "Component Owner"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.AuthorRole != "Component Owner" {
+		t.Errorf("expected Component Owner, got %q", doc.AuthorRole)
+	}
+}
+
+func TestGenerate_DocIDBackstageURL(t *testing.T) {
+	doc, err := Generate(nil, Options{
+		Author:          "team",
+		BackstageURL:    "https://backstage.example.com",
+		EntityKind:      "component",
+		EntityNamespace: "default",
+		EntityName:      "my-service",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	prefix := "https://backstage.example.com/catalog/default/component/my-service#vex-"
+	if !strings.HasPrefix(doc.ID, prefix) {
+		t.Errorf("expected doc ID to start with %q, got %q", prefix, doc.ID)
+	}
+}
+
+func TestGenerate_DocIDBackstageURLTrimsTrailingSlash(t *testing.T) {
+	doc, err := Generate(nil, Options{
+		Author:          "team",
+		BackstageURL:    "https://backstage.example.com/",
+		EntityKind:      "component",
+		EntityNamespace: "default",
+		EntityName:      "my-service",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	prefix := "https://backstage.example.com/catalog/default/component/my-service#vex-"
+	if !strings.HasPrefix(doc.ID, prefix) {
+		t.Errorf("expected doc ID to start with %q, got %q", prefix, doc.ID)
+	}
+}
+
+func TestGenerate_DocIDFallsBackToUUIDWhenPartial(t *testing.T) {
+	// BackstageURL set but no entity fields → fall back to urn:uuid.
+	doc, err := Generate(nil, Options{
+		Author:       "team",
+		BackstageURL: "https://backstage.example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(doc.ID, "urn:uuid:") {
+		t.Errorf("expected urn:uuid fallback when entity fields missing, got %q", doc.ID)
+	}
+}
+
+func TestGenerate_PurlsAsSubcomponentsWithProduct(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2025-25290",
+			Statement: "not reachable",
+			PURLs:     []string{"pkg:npm/%40octokit/request"},
+		},
+	}
+	doc, err := Generate(entries, Options{
+		Author:  "team",
+		Product: "pkg:oci/my-image@sha256:abc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(doc.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(doc.Statements))
+	}
+	stmt := doc.Statements[0]
+	if len(stmt.Products) != 1 {
+		t.Fatalf("expected 1 product, got %d", len(stmt.Products))
+	}
+	if len(stmt.Products[0].Subcomponents) != 1 {
+		t.Fatalf("expected 1 subcomponent, got %d", len(stmt.Products[0].Subcomponents))
+	}
+	subPurl := stmt.Products[0].Subcomponents[0].Identifiers[govex.PURL]
+	if subPurl != "pkg:npm/%40octokit/request" {
+		t.Errorf("unexpected subcomponent purl: %s", subPurl)
+	}
+	// prose "Affected purls:" should NOT appear when subcomponents are emitted structurally
+	if strings.Contains(stmt.ImpactStatement, "Affected purls:") {
+		t.Errorf("did not expect Affected purls: prose when product is set, got: %s", stmt.ImpactStatement)
+	}
+}
+
+func TestGenerate_PurlsAsProseWithoutProduct(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2025-25290",
+			Statement: "not reachable",
+			PURLs:     []string{"pkg:npm/%40octokit/request", "pkg:npm/other"},
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if len(stmt.Products) != 0 {
+		t.Errorf("expected no products when --product not set, got %d", len(stmt.Products))
+	}
+	// not_affected → prose goes into impact_statement
+	if !strings.Contains(stmt.ImpactStatement, "Affected purls: pkg:npm/%40octokit/request, pkg:npm/other") {
+		t.Errorf("expected Affected purls: prose in impact_statement, got: %s", stmt.ImpactStatement)
+	}
+	// blank line separator between existing prose and new note
+	if !strings.Contains(stmt.ImpactStatement, "not reachable\n\nAffected purls:") {
+		t.Errorf("expected blank-line separator, got: %s", stmt.ImpactStatement)
+	}
+}
+
+func TestGenerate_PathsAsProse(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-1234",
+			Statement: "not reachable",
+			Paths:     []string{"src/foo.js", "src/bar.js"},
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if !strings.Contains(stmt.ImpactStatement, "Affected paths: src/foo.js, src/bar.js") {
+		t.Errorf("expected Affected paths: prose, got: %s", stmt.ImpactStatement)
+	}
+}
+
+func TestGenerate_PathsProseForAffected(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-9999",
+			Statement: "Risk accepted",
+			Paths:     []string{"src/foo.js"},
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if stmt.Status != govex.StatusAffected {
+		t.Fatalf("expected affected, got %s", stmt.Status)
+	}
+	// affected → paths prose goes into action_statement
+	if !strings.Contains(stmt.ActionStatement, "Affected paths: src/foo.js") {
+		t.Errorf("expected Affected paths: in action_statement, got: %s", stmt.ActionStatement)
+	}
+}
+
+func TestGenerate_PathsProseForFixed(t *testing.T) {
+	entries := []types.IgnoreEntry{
+		{
+			ID:        "CVE-2023-9998",
+			Statement: "Fixed in v2.0",
+			Paths:     []string{"src/foo.js"},
+		},
+	}
+	doc, err := Generate(entries, Options{Author: "team"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stmt := doc.Statements[0]
+	if stmt.Status != govex.StatusFixed {
+		t.Fatalf("expected fixed, got %s", stmt.Status)
+	}
+	// fixed → prose goes into status_notes
+	if !strings.Contains(stmt.StatusNotes, "Affected paths: src/foo.js") {
+		t.Errorf("expected Affected paths: in status_notes, got: %s", stmt.StatusNotes)
 	}
 }
