@@ -180,3 +180,20 @@ func TestInferStatus_FirstMatchWins(t *testing.T) {
 		t.Errorf("expected component_not_present, got %s", result.Justification)
 	}
 }
+
+// TestInferStatus_NotPresentInBuildSubsumed pins the design decision that
+// "not present in build" — despite semantically fitting vulnerable_code_not_present —
+// is intentionally omitted from that rule's keyword list because it contains
+// "not present" (a priority-1 keyword). The phrase therefore matches
+// component_not_present. If someone later expands the vulnerable_code_not_present
+// keywords to include "not present in build" without adjusting priorities, this
+// test will fail, forcing them to reconsider the collision.
+func TestInferStatus_NotPresentInBuildSubsumed(t *testing.T) {
+	result := InferStatus("Vulnerable code is not present in build")
+	if result.Status != vex.StatusNotAffected {
+		t.Errorf("expected not_affected, got %s", result.Status)
+	}
+	if result.Justification != vex.ComponentNotPresent {
+		t.Errorf("expected component_not_present (via 'not present' priority-1 match), got %s", result.Justification)
+	}
+}

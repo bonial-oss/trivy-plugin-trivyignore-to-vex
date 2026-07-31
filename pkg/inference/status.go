@@ -30,7 +30,10 @@ var rules = []rule{
 		justification: vex.ComponentNotPresent,
 	},
 	{
-		keywords:      []string{"not compiled in", "not present in build", "feature disabled", "excluded from build", "build flag off"},
+		// Constraint: keywords here must not contain any priority-1 keyword
+		// as a substring — `strings.Contains` + first-match-wins would route
+		// them to priority 1 instead.
+		keywords:      []string{"not compiled in", "feature disabled", "excluded from build", "build flag off"},
 		status:        vex.StatusNotAffected,
 		justification: vex.VulnerableCodeNotPresent,
 	},
