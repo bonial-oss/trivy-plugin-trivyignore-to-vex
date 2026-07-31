@@ -260,6 +260,72 @@ func TestCLI_CatalogWithoutBackstageURLDerivesEntityRefAuthor(t *testing.T) {
 	}
 }
 
+func TestCLI_QuietSuppressesWarnings(t *testing.T) {
+	buildBinary(t)
+
+	// Fixture with purls but no --product invocation → should trigger the
+	// "purls without --product" warning without --quiet, and suppress it with.
+	tmpDir := t.TempDir()
+	fixture := tmpDir + "/trivyignore.yaml"
+	fixtureContent := "vulnerabilities:\n  - id: CVE-2025-25290\n    purls:\n      - pkg:npm/foo\n    statement: not reachable\n"
+	if err := os.WriteFile(fixture, []byte(fixtureContent), 0644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	// Baseline: warning fires.
+	baseline := exec.Command("./trivyignore-to-vex", "-i", fixture, "--no-catalog", "--author", "test")
+	var baselineStderr bytes.Buffer
+	baseline.Stderr = &baselineStderr
+	if err := baseline.Run(); err != nil {
+		t.Fatalf("baseline run failed: %v\nstderr: %s", err, baselineStderr.String())
+	}
+	if !strings.Contains(baselineStderr.String(), "purls") {
+		t.Fatalf("expected purls warning in baseline stderr, got: %q", baselineStderr.String())
+	}
+
+	// With --quiet: warning suppressed.
+	quiet := exec.Command("./trivyignore-to-vex", "-i", fixture, "--no-catalog", "--author", "test", "--quiet")
+	var quietStderr bytes.Buffer
+	quiet.Stderr = &quietStderr
+	if err := quiet.Run(); err != nil {
+		t.Fatalf("--quiet run failed: %v\nstderr: %s", err, quietStderr.String())
+	}
+	if quietStderr.Len() != 0 {
+		t.Errorf("expected empty stderr with --quiet, got: %q", quietStderr.String())
+	}
+}
+
+func TestCLI_TitleCaseKindInRole(t *testing.T) {
+	buildBinary(t)
+
+	// Fixture with non-standard lowercase `kind:` — role should still be
+	// "Component Owner" (title-cased), not "component Owner".
+	tmpDir := t.TempDir()
+	catalogFile := tmpDir + "/catalog-info.yaml"
+	catalogContent := "apiVersion: backstage.io/v1alpha1\nkind: component\nmetadata:\n  name: my-service\nspec:\n  owner: some-team\n"
+	if err := os.WriteFile(catalogFile, []byte(catalogContent), 0644); err != nil {
+		t.Fatalf("failed to write catalog fixture: %v", err)
+	}
+
+	cmd := exec.Command("./trivyignore-to-vex",
+		"-i", "testdata/trivyignore_integration.yaml",
+		"--catalog", catalogFile,
+	)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if doc["role"] != "Component Owner" {
+		t.Errorf("expected role 'Component Owner' from lowercase kind, got %v", doc["role"])
+	}
+}
+
 func TestCLI_BackstageURLFromEnv(t *testing.T) {
 	buildBinary(t)
 

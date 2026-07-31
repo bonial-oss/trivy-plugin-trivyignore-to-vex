@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -34,6 +35,7 @@ func run() int {
 		catalogP     string
 		noCatalog    bool
 		backstageURL string
+		quiet        bool
 		showVer      bool
 	)
 
@@ -43,11 +45,13 @@ func run() int {
 	flag.StringVar(&output, "output", "", "Output file (default: stdout)")
 	flag.StringVar(&product, "p", "", "Product identifier (purl or image ref)")
 	flag.StringVar(&product, "product", "", "Product identifier (purl or image ref)")
-	flag.StringVar(&author, "author", "", "VEX document author (overrides derivation from catalog-info.yaml)")
-	flag.StringVar(&authorRole, "author-role", "", "VEX document author role (overrides derivation; empty when no source available)")
+	flag.StringVar(&author, "author", "", "VEX document author. Overrides derivation; when unset, derived from catalog-info.yaml `spec.owner` if available, otherwise \"Unknown\".")
+	flag.StringVar(&authorRole, "author-role", "", "VEX document author role. Overrides derivation; when unset, derived as \"<Kind> Owner\" if author came from `spec.owner`, otherwise omitted.")
 	flag.StringVar(&catalogP, "catalog", "catalog-info.yaml", "Path to Backstage catalog-info.yaml")
 	flag.BoolVar(&noCatalog, "no-catalog", false, "Skip reading catalog-info.yaml")
 	flag.StringVar(&backstageURL, "backstage-url", "", "Backstage instance host URL (e.g. https://backstage.example.com). Enables Backstage-URL doc @id and author. Env fallback: "+backstageURLEnvVar)
+	flag.BoolVar(&quiet, "q", false, "Suppress non-fatal warnings on stderr. Errors accompanying non-zero exit codes are still emitted.")
+	flag.BoolVar(&quiet, "quiet", false, "Suppress non-fatal warnings on stderr. Errors accompanying non-zero exit codes are still emitted.")
 	flag.BoolVar(&showVer, "v", false, "Print version")
 	flag.BoolVar(&showVer, "version", false, "Print version")
 	flag.Parse()
@@ -91,10 +95,12 @@ func run() int {
 		author = "Unknown"
 	}
 
-	// Resolve author role (FR-3.3 + FR-6.9).
+	// Resolve author role (FR-3.3 + FR-6.9). Title-case the kind so a
+	// non-standard lowercase `kind:` in catalog-info.yaml still produces a
+	// well-formed role like "Component Owner" (never "component Owner").
 	if authorRole == "" && authorFromOwner {
 		if info != nil && info.Kind != "" {
-			authorRole = info.Kind + " Owner"
+			authorRole = titleCase(info.Kind) + " Owner"
 		} else {
 			authorRole = "Owner"
 		}
@@ -121,6 +127,12 @@ func run() int {
 		return 2
 	}
 
+	// Warnings sink: --quiet routes to io.Discard; otherwise os.Stderr (nil → default in generator).
+	var warningsWriter io.Writer
+	if quiet {
+		warningsWriter = io.Discard
+	}
+
 	// Generate VEX document.
 	opts := vexgen.Options{
 		Author:          author,
@@ -130,6 +142,7 @@ func run() int {
 		EntityKind:      entityKind,
 		EntityNamespace: entityNamespace,
 		EntityName:      entityName,
+		WarningsWriter:  warningsWriter,
 	}
 	doc, err := vexgen.Generate(entries, opts)
 	if err != nil {
@@ -157,4 +170,16 @@ func run() int {
 	}
 
 	return 0
+}
+
+// titleCase upper-cases the first byte of s. Handles the common ASCII case:
+// Backstage entity kinds are ASCII (Component, System, API, Resource, Group,
+// User, Location, Domain), and normalising a non-standard lowercase kind
+// ("component") to Title case ("Component") is all we need. Preserves already-
+// upper-cased first letters (e.g. "API" stays "API").
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
